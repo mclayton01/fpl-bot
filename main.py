@@ -16,6 +16,7 @@ from config import (
 )
 from fpl_api import FPLClient
 from optimizer import FPLOptimizer
+from notifier import generate_markdown_summary, save_step_summary, send_email_notification
 
 # Configure Rich Logging
 logging.basicConfig(
@@ -35,7 +36,7 @@ def run():
     print(f"• Deadline Window   : Within {HOURS_BEFORE_DEADLINE} hours")
     print("="*65 + "\n")
 
-    client = FPLClient(team_id=FPL_TEAM_ID, cookie=FPL_COOKIE)
+    client = FPLClient(team_id=FPL_TEAM_ID, auth_token=FPL_COOKIE)
 
     # 1. Fetch Core Game Data
     logger.info("Fetching FPL live game state and player statistics...")
@@ -50,9 +51,11 @@ def run():
     now = datetime.now(timezone.utc)
     time_to_deadline = deadline - now
     hours_left = time_to_deadline.total_seconds() / 3600.0
+    gw_name = next_event.get("name", "Next Gameweek")
+    deadline_str = deadline.strftime("%Y-%m-%d %H:%M UTC")
 
-    print(f"📅 Next Event   : {next_event.get('name', 'Next Gameweek')}")
-    print(f"⏰ Deadline     : {deadline.strftime('%Y-%m-%d %H:%M UTC')} ({hours_left:.1f} hours from now)")
+    print(f"📅 Next Event   : {gw_name}")
+    print(f"⏰ Deadline     : {deadline_str} ({hours_left:.1f} hours from now)")
 
     if hours_left < 0:
         logger.warning("Gameweek deadline has already passed! Waiting for next round to open.")
@@ -131,7 +134,6 @@ def run():
             }]
             success = client.execute_transfers(transfer_payload, next_event["id"])
             if success:
-                # Update squad valuations in-memory for lineup solver
                 squad_valuations = [p for p in squad_valuations if p.element["id"] != out_p.element["id"]] + [in_p]
             else:
                 logger.warning("Transfer submission failed. Keeping existing squad for lineup optimization.")
@@ -166,7 +168,6 @@ def run():
     # 7. Submit Lineup if Live
     if not DRY_RUN:
         logger.info("Submitting optimal lineup and captaincy to FPL API...")
-        # Prepare clean payload for API (omit python objects)
         api_picks = [{
             "element": p["element"],
             "position": p["position"],
@@ -176,6 +177,22 @@ def run():
         client.update_lineup(api_picks)
     else:
         logger.info("[DRY RUN] Lineup optimization completed successfully (No live changes sent).")
+
+    # 8. Generate and Publish Rich Markdown Summary & Notifications
+    md_summary = generate_markdown_summary(
+        team_id=FPL_TEAM_ID,
+        gameweek_name=gw_name,
+        deadline_str=deadline_str,
+        is_dry_run=DRY_RUN,
+        summary_data=summary,
+        squad_valuations=squad_valuations,
+        best_transfer=best_transfer,
+        final_picks=final_picks,
+        formation=formation,
+        captain=captain,
+        vice_captain=vice_captain
+    )
+    save_step_summary(md_summary)
 
     print("\n" + "="*65)
     print(" 🎉  FPL BOT RUN COMPLETE!  🚀")
