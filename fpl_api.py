@@ -11,9 +11,10 @@ from config import FPL_BASE_URL
 logger = logging.getLogger("FPLBot")
 
 class FPLClient:
-    def __init__(self, team_id: int, auth_token: str = ""):
+    def __init__(self, team_id: int, auth_token: str = "", cookie: str = ""):
         self.team_id = team_id
-        self.auth_token = auth_token.strip()
+        # Support either auth_token or cookie parameter
+        self.auth_token = (auth_token or cookie or "").strip()
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
