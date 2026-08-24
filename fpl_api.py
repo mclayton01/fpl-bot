@@ -1,5 +1,5 @@
 """
-FPL API Client: Handles fetching data, authentication, lineup updates, and transfers.
+FPL API Client: Supports both modern OIDC (Bearer / X-Api-Authorization) and legacy Cookie authentication.
 """
 import json
 import logging
@@ -11,9 +11,9 @@ from config import FPL_BASE_URL
 logger = logging.getLogger("FPLBot")
 
 class FPLClient:
-    def __init__(self, team_id: int, cookie: str = ""):
+    def __init__(self, team_id: int, auth_token: str = ""):
         self.team_id = team_id
-        self.cookie = cookie.strip()
+        self.auth_token = auth_token.strip()
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -21,10 +21,40 @@ class FPLClient:
             "Origin": "https://fantasy.premierleague.com",
             "Accept": "application/json, text/plain, */*",
         })
-        if self.cookie:
-            # Add session cookie (handling either raw token or pl_profile=token format)
-            cookie_val = self.cookie if "pl_profile=" in self.cookie else f"pl_profile={self.cookie}"
-            self.session.headers.update({"Cookie": cookie_val})
+        self._setup_auth()
+
+    def _setup_auth(self):
+        """Configures authentication headers based on provided auth token or JSON string."""
+        if not self.auth_token:
+            return
+
+        # Check if auth_token is an OIDC JSON object (from localStorage oidc.user)
+        if "{" in self.auth_token and "}" in self.auth_token:
+            try:
+                data = json.loads(self.auth_token)
+                access_token = data.get("access_token") or data.get("id_token")
+                if access_token:
+                    self.session.headers.update({
+                        "X-Api-Authorization": f"Bearer {access_token}",
+                        "Authorization": f"Bearer {access_token}"
+                    })
+                    logger.info("Configured modern OIDC Bearer token authentication.")
+                    return
+            except Exception as e:
+                logger.warning(f"Could not parse auth token as JSON: {e}")
+
+        # Check if raw JWT Bearer token
+        if self.auth_token.startswith("eyJ"):
+            self.session.headers.update({
+                "X-Api-Authorization": f"Bearer {self.auth_token}",
+                "Authorization": f"Bearer {self.auth_token}"
+            })
+            logger.info("Configured Bearer token authentication.")
+            return
+
+        # Legacy cookie fallback
+        cookie_val = self.auth_token if "pl_profile=" in self.auth_token or "=" in self.auth_token else f"pl_profile={self.auth_token}"
+        self.session.headers.update({"Cookie": cookie_val})
 
     def get_bootstrap(self) -> dict:
         """Fetches core game data: all players, clubs, gameweeks, and positions."""
@@ -46,7 +76,6 @@ class FPLClient:
         events = bootstrap.get("events", [])
         next_events = [e for e in events if e.get("is_next")]
         if not next_events:
-            # If no next event, find the first non-finished event
             next_events = [e for e in events if not e.get("finished")]
         
         if not next_events:
@@ -62,8 +91,7 @@ class FPLClient:
         Retrieves the team's current 15 picks and financial summary.
         Attempts authenticated /my-team/ endpoint first; falls back to public /picks/ if unauthenticated.
         """
-        # Try authenticated endpoint
-        if self.cookie:
+        if self.auth_token:
             url = f"{FPL_BASE_URL}/my-team/{self.team_id}/"
             try:
                 resp = self.session.get(url, timeout=15)
@@ -100,19 +128,17 @@ class FPLClient:
 
         history = picks_data.get("entry_history", {})
         summary = {
-            "bank": history.get("bank", entry_data.get("summary_overall_rank", 0)),
+            "bank": history.get("bank", 0),
             "value": history.get("value", 1000),
-            "free_transfers": 1, # Default 1 FT assumption if public
+            "free_transfers": 1,
             "authenticated": False
         }
         return picks_data.get("picks", []), summary
 
     def update_lineup(self, picks_payload: list) -> bool:
-        """
-        Submits updated Starting XI, bench order, Captain, and Vice-Captain.
-        """
-        if not self.cookie:
-            logger.error("Cannot submit lineup update: No FPL_COOKIE provided.")
+        """Submits updated Starting XI, bench order, Captain, and Vice-Captain."""
+        if not self.auth_token:
+            logger.error("Cannot submit lineup update: No auth token provided.")
             return False
 
         url = f"{FPL_BASE_URL}/my-team/{self.team_id}/"
@@ -129,11 +155,9 @@ class FPLClient:
             return False
 
     def execute_transfers(self, transfers_list: list, event_id: int) -> bool:
-        """
-        Executes player transfers on FPL API.
-        """
-        if not self.cookie:
-            logger.error("Cannot execute transfers: No FPL_COOKIE provided.")
+        """Executes player transfers on FPL API."""
+        if not self.auth_token:
+            logger.error("Cannot execute transfers: No auth token provided.")
             return False
 
         url = f"{FPL_BASE_URL}/transfers/"
