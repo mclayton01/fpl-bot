@@ -54,5 +54,11 @@ jobs:
           HOURS_BEFORE_DEADLINE: '6.0'
           MIN_TRANSFER_IMPROVEMENT: '0.75'
           MAX_TRANSFERS: '1'
+          # Email Notification Secrets
+          SMTP_HOST: 'smtp.gmail.com'
+          SMTP_PORT: '587'
+          SMTP_USER: ${{ secrets.SMTP_USER || 'markjclayton@gmail.com' }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL || 'markjclayton@gmail.com' }}
         run: |
           python main.py

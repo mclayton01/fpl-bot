@@ -14,59 +14,36 @@ A 100% hands-off, automated Fantasy Premier League bot designed to manage your t
         ├── 3. 🛡️ Solves Optimal Starting XI & Formation (e.g. 3-5-2, 3-4-3)
         ├── 4. 🪑 Prioritizes Bench Order (Auto-subs best backup if starter is benched)
         ├── 5. 👑 Picks Captain (C) & Vice-Captain (VC)
-        └── 6. 🚀 Submits Changes Directly to FPL
+        ├── 6. 🚀 Submits Changes Directly to FPL
+        ├── 7. 📊 Publishes Visual Summary Card to GitHub
+        └── 8. 📧 Sends Matchday Preview Email to your inbox
 ```
 
 ---
 
-## 🚀 Quick Setup Guide (5 Minutes)
-
-### Step 1: Create a Private GitHub Repository
-1. Go to [GitHub.com/new](https://github.com/new).
-2. Name your repo (e.g. `fpl-bot`).
-3. Set visibility to **Private** (to protect your settings).
-4. Click **Create repository**.
+## 📊 Where to View Your Weekly Visual Report
+1. Go to your repository's **[Actions](https://github.com/mclayton01/fpl-bot/actions)** tab.
+2. Click on the latest run (e.g. `FPL Automated Gameweek Manager`).
+3. Scroll down on the **Summary** page to see your complete visual matchday table!
 
 ---
 
-### Step 2: Get Your FPL Session Cookie (`pl_profile`)
-Because the FPL login page uses anti-bot verification, the bot uses your browser's active session token instead of storing your password.
+## 💡 How to Refresh Your Token in 10 Seconds
+If FPL ever forces a logout during the season, you can refresh your token in 10 seconds:
 
-1. Open Chrome (or any browser) and log in to [fantasy.premierleague.com](https://fantasy.premierleague.com/).
-2. Press `F12` (or Right-Click anywhere $\rightarrow$ **Inspect**) to open Developer Tools.
-3. Click the **Application** tab at the top (in Firefox/Safari, it is called **Storage**).
-4. In the left sidebar, expand **Cookies** $\rightarrow$ click `https://fantasy.premierleague.com`.
-5. Find the row named **`pl_profile`** and copy its **Value** (a long string of letters/numbers).
-
----
-
-### Step 3: Add Your Secrets in GitHub
-1. In your GitHub repository, go to **Settings** $\rightarrow$ **Secrets and variables** $\rightarrow$ **Actions**.
-2. Click **New repository secret**.
-3. Add these two secrets:
-   * **Name**: `FPL_COOKIE`  
-     **Value**: *(Paste the `pl_profile` value you copied)*
-   * **Name**: `FPL_TEAM_ID`  
-     **Value**: `8662144`
+1. Open [fantasy.premierleague.com](https://fantasy.premierleague.com/) in your browser while logged in.
+2. Press `F12` (or Right-Click $\rightarrow$ **Inspect**) and click the **Console** tab.
+3. Paste this exact 1-line command and press **Enter**:
+   ```javascript
+   copy(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('oidc.user'))))
+   ```
+4. Go to **[GitHub Secrets](https://github.com/mclayton01/fpl-bot/settings/secrets/actions)** $\rightarrow$ click **`FPL_COOKIE`** $\rightarrow$ paste and save!
 
 ---
 
-### Step 4: Push the Bot Code to GitHub
-Run these commands in your terminal to push this project to your new private GitHub repository:
-
-```bash
-cd /usr/local/google/home/markclayton/.gemini/jetski/scratch/fpl-bot
-git remote add origin git@github.com:YOUR_GITHUB_USERNAME/fpl-bot.git
-git branch -M main
-git push -u origin main
-```
-
----
-
-## 🎮 How to Test or Run Manually
-
-1. Go to the **Actions** tab in your GitHub repository.
-2. Select **FPL Automated Gameweek Manager** in the left sidebar.
-3. Click **Run workflow** $\rightarrow$ choose whether you want **Dry Run** or **Live Run** $\rightarrow$ click the green **Run workflow** button!
-
-The bot will execute in the cloud, print a complete breakdown of your squad, and update your team!
+## 📧 How to Enable Email Notifications
+To receive weekly match preview emails in your inbox (`markjclayton@gmail.com`):
+1. Generate a 16-character Google App Password at: [https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+2. In your GitHub repository **[Secrets](https://github.com/mclayton01/fpl-bot/settings/secrets/actions)**, add:
+   * **Name**: `SMTP_PASS`
+   * **Value**: *(Your 16-character Google App Password)*

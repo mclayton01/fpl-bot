@@ -16,7 +16,7 @@ from config import (
 )
 from fpl_api import FPLClient
 from optimizer import FPLOptimizer
-from notifier import generate_markdown_summary, save_step_summary, send_email_notification
+from notifier import generate_markdown_summary, generate_html_email, save_step_summary, send_email_notification
 
 # Configure Rich Logging
 logging.basicConfig(
@@ -178,7 +178,7 @@ def run():
     else:
         logger.info("[DRY RUN] Lineup optimization completed successfully (No live changes sent).")
 
-    # 8. Generate and Publish Rich Markdown Summary & Notifications
+    # 8. Generate and Publish Rich Markdown Summary & HTML Email
     md_summary = generate_markdown_summary(
         team_id=FPL_TEAM_ID,
         gameweek_name=gw_name,
@@ -193,6 +193,21 @@ def run():
         vice_captain=vice_captain
     )
     save_step_summary(md_summary)
+
+    html_email = generate_html_email(
+        team_id=FPL_TEAM_ID,
+        gameweek_name=gw_name,
+        deadline_str=deadline_str,
+        is_dry_run=DRY_RUN,
+        summary_data=summary,
+        best_transfer=best_transfer,
+        final_picks=final_picks,
+        formation=formation,
+        captain=captain,
+        vice_captain=vice_captain
+    )
+    subject = f"⚽ FPL Gameweek Update: {gw_name} Lineup & Transfers"
+    send_email_notification(subject=subject, html_content=html_email)
 
     print("\n" + "="*65)
     print(" 🎉  FPL BOT RUN COMPLETE!  🚀")
