@@ -1,0 +1,58 @@
+name: FPL Automated Gameweek Manager
+
+on:
+  # Runs every 4 hours automatically to check deadline timing & execute near deadline
+  schedule:
+    - cron: '0 */4 * * *'
+  
+  # Allows you to trigger the bot manually at any time with 1 click
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry Run Mode (Simulate without submitting live changes)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      force_run:
+        description: 'Force Run (Execute immediately even if outside the deadline window)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  manage-team:
+    name: Optimize & Manage FPL Squad
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Check out repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🤖 Run FPL Bot
+        env:
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID || '8662144' }}
+          FPL_COOKIE: ${{ secrets.FPL_COOKIE }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
+          HOURS_BEFORE_DEADLINE: '6.0'
+          MIN_TRANSFER_IMPROVEMENT: '0.75'
+          MAX_TRANSFERS: '1'
+        run: |
+          python main.py
