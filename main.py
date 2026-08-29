@@ -4,6 +4,7 @@ Main Entrypoint for Automated FPL Bot.
 import sys
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from config import (
     FPL_TEAM_ID,
@@ -46,13 +47,16 @@ def run():
         logger.error(f"Failed to fetch bootstrap static data: {e}")
         sys.exit(1)
 
-    # 2. Check Upcoming Gameweek & Deadline
+    # 2. Check Upcoming Gameweek & Deadline (Formatted for NYC Eastern Time)
     next_event, deadline = client.get_next_event(bootstrap)
     now = datetime.now(timezone.utc)
     time_to_deadline = deadline - now
     hours_left = time_to_deadline.total_seconds() / 3600.0
     gw_name = next_event.get("name", "Next Gameweek")
-    deadline_str = deadline.strftime("%Y-%m-%d %H:%M UTC")
+    
+    # NYC Eastern Time Formatting
+    deadline_nyc = deadline.astimezone(ZoneInfo("America/New_York"))
+    deadline_str = f"{deadline_nyc.strftime('%A, %b %d at %I:%M %p')} EDT (NYC) / {deadline.strftime('%H:%M UTC')}"
 
     print(f"📅 Next Event   : {gw_name}")
     print(f"⏰ Deadline     : {deadline_str} ({hours_left:.1f} hours from now)")
