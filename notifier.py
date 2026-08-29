@@ -1,5 +1,5 @@
 """
-Notification engine: Generates GitHub Actions Step Summaries, HTML Emails, and Webhooks.
+Notification engine: Generates GitHub Actions Step Summaries, HTML Emails with built-in click guides.
 """
 import os
 import logging
@@ -23,15 +23,12 @@ def generate_markdown_summary(
     vice_captain
 ) -> str:
     """Generates rich GitHub Flavored Markdown for the GitHub Actions Step Summary."""
-    mode_badge = "🔍 **Simulation (Dry Run)**" if is_dry_run else "⚡ **Live Gameweek Submission**"
-    auth_status = "✅ Active & Verified" if summary_data.get("authenticated") else "⚠️ Read-Only (Token Refresh Recommended)"
-    
     md = []
-    md.append(f"# ⚽ FPL Automated Manager: {gameweek_name}")
-    md.append(f"> **Mode:** {mode_badge} | **Team ID:** `{team_id}` | **Deadline:** `{deadline_str}` | **Auth:** {auth_status}\n")
+    md.append(f"# ⚽ FPL Manager Cheat Sheet: {gameweek_name}")
+    md.append(f"> **Team ID:** `{team_id}` | **Deadline:** `{deadline_str}`\n")
     
     # 1. Transfers Section
-    md.append(f"## 🔄 Transfer Activity ({len(best_transfers)} Free Transfers Executed)")
+    md.append(f"## 🔄 Recommended Transfers ({len(best_transfers)})")
     if best_transfers:
         md.append("| Action | Player | Club | Position | Cost | Expected Points |")
         md.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
@@ -44,7 +41,7 @@ def generate_markdown_summary(
             md.append(f"| 🟢 **IN** | **{in_p.element['web_name']}** | {in_p.team['short_name']} | {in_p.element_type['singular_name_short']} | £{in_p.element['now_cost']/10:.1f}m | **{in_p.expected_value:.2f}** |")
         md.append(f"\n✨ **Total Expected Gain:** `+{total_gain:.2f} points` (Cost: 0 pts)\n")
     else:
-        md.append("✅ **Squad is optimal!** No transfer needed. Free transfers rolled for maximum future flexibility.\n")
+        md.append("✅ **Squad is optimal!** No transfer needed this week.\n")
 
     # 2. Starting XI Section
     md.append(f"## 🛡️ Starting XI (Formation: {formation[0]}-{formation[1]}-{formation[2]})")
@@ -70,7 +67,7 @@ def generate_markdown_summary(
         role_desc = "1st Auto-Sub if starter benched" if b_idx == 2 else "Backup"
         md.append(f"| {slot_name} | {val.element['web_name']} | {val.team['short_name']} | {val.element_type['singular_name_short']} | {max(val.expected_value, 0.0):.2f} | {role_desc} |")
 
-    md.append("\n---\n*Automated with ❤️ by your FPL Cloud Manager*")
+    md.append("\n---\n*Automated with ❤️ by your FPL Assistant*")
     return "\n".join(md)
 
 def generate_html_email(
@@ -85,27 +82,28 @@ def generate_html_email(
     captain,
     vice_captain
 ) -> str:
-    """Generates a modern, responsive HTML email match preview card."""
-    mode_text = "Simulation (Dry Run)" if is_dry_run else "Live Gameweek Submission"
-    auth_badge = '<span style="color:#00ff87;font-weight:bold;">● Active & Verified</span>' if summary_data.get("authenticated") else '<span style="color:#ff2882;font-weight:bold;">⚠️ Needs Token Refresh</span>'
-
+    """Generates a clean, friendly HTML email with exact desktop click instructions."""
     transfer_html = ""
+    transfer_guide_steps = ""
+    
     if best_transfers:
         transfer_cards = ""
         total_gain = 0.0
-        for tr in best_transfers:
+        for i, tr in enumerate(best_transfers, 1):
             out_p = tr["player_out"]
             in_p = tr["player_in"]
             total_gain += tr["gain"]
             transfer_cards += f"""
-            <div style="margin-top:6px;padding-top:6px;border-top:1px solid #2a2a3c;">
-                <p style="margin:2px 0;color:#ff4d4d;font-size:13px;">🔴 <b>OUT:</b> {out_p.element['web_name']} ({out_p.team['short_name']}) - £{out_p.selling_price/10:.1f}m</p>
-                <p style="margin:2px 0;color:#00ff87;font-size:13px;">🟢 <b>IN:</b> {in_p.element['web_name']} ({in_p.team['short_name']}) - £{in_p.element['now_cost']/10:.1f}m</p>
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a3c;">
+                <p style="margin:3px 0;color:#ff4d4d;font-size:14px;">🔴 <b>OUT:</b> {out_p.element['web_name']} ({out_p.team['short_name']}) - £{out_p.selling_price/10:.1f}m</p>
+                <p style="margin:3px 0;color:#00ff87;font-size:14px;">🟢 <b>IN:</b> {in_p.element['web_name']} ({in_p.team['short_name']}) - £{in_p.element['now_cost']/10:.1f}m</p>
             </div>
             """
+            transfer_guide_steps += f"<li>Click <b>Transfers</b> tab &rarr; Click <b>{out_p.element['web_name']}</b> &rarr; Click red <b>X</b> &rarr; Search & Add <b>{in_p.element['web_name']}</b>.</li>"
+        
         transfer_html = f"""
         <div style="background:#1f1f2e;border-radius:12px;padding:16px;margin-bottom:20px;border-left:4px solid #00ff87;">
-            <h3 style="margin:0;color:#ffffff;font-size:15px;">🔄 Recommended Free Transfers ({len(best_transfers)})</h3>
+            <h3 style="margin:0;color:#ffffff;font-size:16px;">🔄 Recommended Free Transfers ({len(best_transfers)})</h3>
             {transfer_cards}
             <p style="margin:10px 0 0 0;color:#38ef7d;font-size:13px;font-weight:bold;">✨ Net Gain: +{total_gain:.2f} Expected Points (Cost: 0 pts)</p>
         </div>
@@ -113,9 +111,10 @@ def generate_html_email(
     else:
         transfer_html = """
         <div style="background:#1f1f2e;border-radius:12px;padding:14px;margin-bottom:20px;border-left:4px solid #00d2ff;">
-            <p style="margin:0;color:#ffffff;font-size:14px;">✅ <b>Squad is Optimal:</b> No transfer needed. Free transfers rolled for next week!</p>
+            <p style="margin:0;color:#ffffff;font-size:14px;">✅ <b>Squad is Optimal:</b> No transfer needed this week. Free transfer rolled for next week!</p>
         </div>
         """
+        transfer_guide_steps = "<li>No transfers needed this week!</li>"
 
     starters_rows = ""
     for p in final_picks[:11]:
@@ -144,42 +143,61 @@ def generate_html_email(
         </tr>
         """
 
+    cap_name = captain.element['web_name']
+    vc_name = vice_captain.element['web_name']
+
     html = f"""
     <!DOCTYPE html>
     <html>
     <head><meta charset="utf-8"></head>
     <body style="margin:0;padding:20px;background:#0d0d17;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;">
-        <div style="max-width:560px;margin:0 auto;background:#151522;border-radius:16px;overflow:hidden;border:1px solid #28283d;">
+        <div style="max-width:580px;margin:0 auto;background:#151522;border-radius:16px;overflow:hidden;border:1px solid #28283d;">
+            
+            <!-- Header -->
             <div style="background:linear-gradient(135deg, #37003c 0%, #11001a 100%);padding:24px;border-bottom:2px solid #00ff87;">
-                <h1 style="margin:0;font-size:22px;color:#00ff87;letter-spacing:0.5px;">⚽ FPL Matchday Report</h1>
-                <p style="margin:6px 0 0 0;color:#d0d0e0;font-size:14px;">{gameweek_name} &bull; Deadline: {deadline_str}</p>
+                <h1 style="margin:0;font-size:22px;color:#00ff87;letter-spacing:0.5px;">⚽ Your FPL Matchday Cheat Sheet</h1>
+                <p style="margin:6px 0 0 0;color:#d0d0e0;font-size:14px;">{gameweek_name} &bull; Deadline: <b>{deadline_str}</b></p>
             </div>
 
             <div style="padding:20px;">
-                <div style="display:flex;justify-content:space-between;margin-bottom:16px;font-size:12px;color:#a0a0b0;">
-                    <span>Status: {auth_badge}</span>
-                    <span>Formation: <b style="color:#ffffff;">{formation[0]}-{formation[1]}-{formation[2]}</b></span>
+                
+                <!-- Quick 30-Sec Action Guide -->
+                <div style="background:#1b2838;border-radius:12px;padding:16px;margin-bottom:20px;border:1px solid #2d4460;">
+                    <h3 style="margin:0 0 10px 0;color:#00d2ff;font-size:15px;">📋 30-Second Desktop Click-Guide</h3>
+                    <ol style="margin:0;padding-left:20px;color:#e0e0f0;font-size:13px;line-height:1.7;">
+                        {transfer_guide_steps}
+                        <li>Click <b>Confirm Transfers</b> (green button).</li>
+                        <li>Click <b>Pick Team</b> tab &rarr; Click <b>{cap_name}</b> &rarr; Click <b>Make Captain 👑</b>.</li>
+                        <li>Click <b>Save Your Team</b>. Done!</li>
+                    </ol>
                 </div>
 
+                <!-- Transfer Box -->
                 {transfer_html}
 
-                <h3 style="margin:16px 0 8px 0;color:#ffffff;font-size:15px;letter-spacing:0.5px;">🛡️ STARTING XI</h3>
+                <!-- Captain Summary -->
+                <div style="background:#1f1f2e;border-radius:12px;padding:14px;margin-bottom:20px;display:flex;justify-content:space-between;">
+                    <div>👑 <b>Captain (2x Points):</b> <span style="color:#00ff87;font-weight:bold;">{cap_name}</span></div>
+                    <div>🥈 <b>Vice-Captain:</b> <span style="color:#ffffff;">{vc_name}</span></div>
+                </div>
+
+                <!-- Starting XI -->
+                <h3 style="margin:16px 0 8px 0;color:#ffffff;font-size:15px;letter-spacing:0.5px;">🛡️ STARTING XI ({formation[0]}-{formation[1]}-{formation[2]})</h3>
                 <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
                     {starters_rows}
                 </table>
 
+                <!-- Bench -->
                 <h3 style="margin:16px 0 8px 0;color:#a0a0b0;font-size:14px;letter-spacing:0.5px;">🪑 BENCH (AUTO-SUB ORDER)</h3>
-                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                <table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
                     {bench_rows}
                 </table>
 
-                <div style="background:#11111c;border-radius:10px;padding:12px;margin-top:20px;border:1px solid #222233;font-size:11px;color:#707080;">
-                    <p style="margin:0 0 4px 0;color:#9090a0;font-weight:bold;">💡 Quick 10-Sec Token Refresh Command:</p>
-                    <code style="background:#08080f;color:#00ff87;padding:4px 6px;border-radius:4px;display:block;word-break:break-all;font-size:10px;">copy(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('oidc.user'))))</code>
-                </div>
             </div>
-            <div style="background:#0e0e18;padding:12px 20px;text-align:center;font-size:11px;color:#606070;border-top:1px solid #202030;">
-                Automated Hands-Off FPL Bot &bull; Team ID: {team_id}
+
+            <!-- Footer -->
+            <div style="background:#0e0e18;padding:14px 20px;text-align:center;font-size:12px;color:#707080;border-top:1px solid #202030;">
+                Hands-Off FPL Assistant &bull; Team ID: {team_id}
             </div>
         </div>
     </body>
