@@ -1,9 +1,9 @@
 name: FPL Automated Gameweek Manager
 
 on:
-  # Runs every 4 hours automatically to check deadline timing & execute near deadline
+  # Runs every 2 hours to ensure prompt execution and account for GitHub cron delays
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '0 */2 * * *'
   
   # Allows you to trigger the bot manually at any time with 1 click
   workflow_dispatch:
@@ -51,10 +51,10 @@ jobs:
           FPL_COOKIE: ${{ secrets.FPL_COOKIE }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
-          HOURS_BEFORE_DEADLINE: '6.0'
+          HOURS_BEFORE_DEADLINE: '24.0'
           MIN_TRANSFER_IMPROVEMENT: '0.75'
           MAX_TRANSFERS: '1'
-          # Email Notification Secrets
+          # Email Notification Settings
           SMTP_HOST: 'smtp.gmail.com'
           SMTP_PORT: '587'
           SMTP_USER: ${{ secrets.SMTP_USER || 'markjclayton@gmail.com' }}
