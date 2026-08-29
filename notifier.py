@@ -16,7 +16,7 @@ def generate_markdown_summary(
     is_dry_run: bool,
     summary_data: dict,
     squad_valuations: list,
-    best_transfer: dict,
+    best_transfers: list,
     final_picks: list,
     formation: tuple,
     captain,
@@ -31,17 +31,20 @@ def generate_markdown_summary(
     md.append(f"> **Mode:** {mode_badge} | **Team ID:** `{team_id}` | **Deadline:** `{deadline_str}` | **Auth:** {auth_status}\n")
     
     # 1. Transfers Section
-    md.append("## 🔄 Transfer Activity")
-    if best_transfer:
-        out_p = best_transfer["player_out"]
-        in_p = best_transfer["player_in"]
+    md.append(f"## 🔄 Transfer Activity ({len(best_transfers)} Free Transfers Executed)")
+    if best_transfers:
         md.append("| Action | Player | Club | Position | Cost | Expected Points |")
         md.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
-        md.append(f"| 🔴 **OUT** | {out_p.element['web_name']} | {out_p.team['short_name']} | {out_p.element_type['singular_name_short']} | £{out_p.selling_price/10:.1f}m | {max(out_p.expected_value, 0.0):.2f} |")
-        md.append(f"| 🟢 **IN** | **{in_p.element['web_name']}** | {in_p.team['short_name']} | {in_p.element_type['singular_name_short']} | £{in_p.element['now_cost']/10:.1f}m | **{in_p.expected_value:.2f}** |")
-        md.append(f"\n✨ **Net Expected Gain:** `+{best_transfer['gain']:.2f} points` (Cost: 0 pts)\n")
+        total_gain = 0.0
+        for tr in best_transfers:
+            out_p = tr["player_out"]
+            in_p = tr["player_in"]
+            total_gain += tr["gain"]
+            md.append(f"| 🔴 **OUT** | {out_p.element['web_name']} | {out_p.team['short_name']} | {out_p.element_type['singular_name_short']} | £{out_p.selling_price/10:.1f}m | {max(out_p.expected_value, 0.0):.2f} |")
+            md.append(f"| 🟢 **IN** | **{in_p.element['web_name']}** | {in_p.team['short_name']} | {in_p.element_type['singular_name_short']} | £{in_p.element['now_cost']/10:.1f}m | **{in_p.expected_value:.2f}** |")
+        md.append(f"\n✨ **Total Expected Gain:** `+{total_gain:.2f} points` (Cost: 0 pts)\n")
     else:
-        md.append("✅ **Squad is optimal!** No transfer exceeded the improvement threshold. Free transfer rolled for next week.\n")
+        md.append("✅ **Squad is optimal!** No transfer needed. Free transfers rolled for maximum future flexibility.\n")
 
     # 2. Starting XI Section
     md.append(f"## 🛡️ Starting XI (Formation: {formation[0]}-{formation[1]}-{formation[2]})")
@@ -76,7 +79,7 @@ def generate_html_email(
     deadline_str: str,
     is_dry_run: bool,
     summary_data: dict,
-    best_transfer: dict,
+    best_transfers: list,
     final_picks: list,
     formation: tuple,
     captain,
@@ -87,21 +90,30 @@ def generate_html_email(
     auth_badge = '<span style="color:#00ff87;font-weight:bold;">● Active & Verified</span>' if summary_data.get("authenticated") else '<span style="color:#ff2882;font-weight:bold;">⚠️ Needs Token Refresh</span>'
 
     transfer_html = ""
-    if best_transfer:
-        out_p = best_transfer["player_out"]
-        in_p = best_transfer["player_in"]
+    if best_transfers:
+        transfer_cards = ""
+        total_gain = 0.0
+        for tr in best_transfers:
+            out_p = tr["player_out"]
+            in_p = tr["player_in"]
+            total_gain += tr["gain"]
+            transfer_cards += f"""
+            <div style="margin-top:6px;padding-top:6px;border-top:1px solid #2a2a3c;">
+                <p style="margin:2px 0;color:#ff4d4d;font-size:13px;">🔴 <b>OUT:</b> {out_p.element['web_name']} ({out_p.team['short_name']}) - £{out_p.selling_price/10:.1f}m</p>
+                <p style="margin:2px 0;color:#00ff87;font-size:13px;">🟢 <b>IN:</b> {in_p.element['web_name']} ({in_p.team['short_name']}) - £{in_p.element['now_cost']/10:.1f}m</p>
+            </div>
+            """
         transfer_html = f"""
         <div style="background:#1f1f2e;border-radius:12px;padding:16px;margin-bottom:20px;border-left:4px solid #00ff87;">
-            <h3 style="margin:0 0 10px 0;color:#ffffff;font-size:16px;">🔄 Recommended Free Transfer</h3>
-            <p style="margin:4px 0;color:#ff4d4d;font-size:14px;">🔴 <b>OUT:</b> {out_p.element['web_name']} ({out_p.team['short_name']}) - £{out_p.selling_price/10:.1f}m</p>
-            <p style="margin:4px 0;color:#00ff87;font-size:14px;">🟢 <b>IN:</b> {in_p.element['web_name']} ({in_p.team['short_name']}) - £{in_p.element['now_cost']/10:.1f}m</p>
-            <p style="margin:8px 0 0 0;color:#38ef7d;font-size:13px;font-weight:bold;">✨ Net Gain: +{best_transfer['gain']:.2f} Expected Points (Cost: 0 pts)</p>
+            <h3 style="margin:0;color:#ffffff;font-size:15px;">🔄 Recommended Free Transfers ({len(best_transfers)})</h3>
+            {transfer_cards}
+            <p style="margin:10px 0 0 0;color:#38ef7d;font-size:13px;font-weight:bold;">✨ Net Gain: +{total_gain:.2f} Expected Points (Cost: 0 pts)</p>
         </div>
         """
     else:
         transfer_html = """
         <div style="background:#1f1f2e;border-radius:12px;padding:14px;margin-bottom:20px;border-left:4px solid #00d2ff;">
-            <p style="margin:0;color:#ffffff;font-size:14px;">✅ <b>Squad is Optimal:</b> No transfer needed. Free transfer rolled for next week!</p>
+            <p style="margin:0;color:#ffffff;font-size:14px;">✅ <b>Squad is Optimal:</b> No transfer needed. Free transfers rolled for next week!</p>
         </div>
         """
 
@@ -175,10 +187,7 @@ def generate_html_email(
     """
     return html
 
-def send_email_notification(
-    subject: str,
-    html_content: str
-):
+def send_email_notification(subject: str, html_content: str):
     """Sends an HTML email notification if SMTP credentials or Notification Email is configured."""
     recipient = os.getenv("NOTIFICATION_EMAIL", "").strip()
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
@@ -187,7 +196,7 @@ def send_email_notification(
     smtp_pass = os.getenv("SMTP_PASS", "").strip()
 
     if not recipient or not smtp_user or not smtp_pass:
-        logger.info("Email notification skipped (SMTP_USER, SMTP_PASS, or NOTIFICATION_EMAIL not set in GitHub Secrets).")
+        logger.info("Email notification skipped (SMTP credentials not configured).")
         return
 
     try:
@@ -195,7 +204,6 @@ def send_email_notification(
         msg["Subject"] = subject
         msg["From"] = f"FPL Manager <{smtp_user}>"
         msg["To"] = recipient
-
         msg.attach(MIMEText(html_content, "html"))
 
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:

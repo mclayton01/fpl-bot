@@ -104,44 +104,52 @@ def run():
         flag = f" ⚠️ {val.status_summary}" if val.is_injured_or_flagged else ""
         print(f"  • [{pos:3}] {name:16} ({club:3}) {cost:7} | {ev:8}{flag}")
 
-    # 5. Check for Transfers
+    # 5. Check for Multi-Transfers (supports banked FTs)
     print("\n" + "-" * 65)
-    print("🔄 Transfer Analysis:")
-    best_transfer = None
+    print(f"🔄 Transfer Analysis ({free_transfers} Free Transfers Available):")
+    best_transfers = []
     if free_transfers >= 1:
-        best_transfer = optimizer.optimize_transfers(
+        best_transfers = optimizer.optimize_transfers(
             squad_valuations=squad_valuations,
             bank=bank,
-            free_transfers=min(free_transfers, MAX_TRANSFERS),
+            free_transfers=free_transfers,
             min_improvement=MIN_TRANSFER_IMPROVEMENT
         )
 
-    if best_transfer:
-        out_p = best_transfer["player_out"]
-        in_p = best_transfer["player_in"]
-        print(f"  ✨ RECOMMENDED TRANSFER:")
-        print(f"     OUT 🔴 : {out_p.element['web_name']} ({out_p.team['short_name']}) - £{out_p.selling_price/10:.1f}m [EV: {max(out_p.expected_value, 0.0):.2f}]")
-        print(f"     IN  🟢 : {in_p.element['web_name']} ({in_p.team['short_name']}) - £{in_p.element['now_cost']/10:.1f}m [EV: {in_p.expected_value:.2f}]")
-        print(f"     GAIN   : +{best_transfer['gain']:.2f} Expected Points (Cost: 0 pts)")
-
-        if not DRY_RUN:
-            logger.info("Submitting transfer to FPL API...")
-            transfer_payload = [{
+    if best_transfers:
+        print(f"  ✨ RECOMMENDED TRANSFERS ({len(best_transfers)}):")
+        transfer_payload = []
+        for tr in best_transfers:
+            out_p = tr["player_out"]
+            in_p = tr["player_in"]
+            print(f"     OUT 🔴 : {out_p.element['web_name']} ({out_p.team['short_name']}) - £{out_p.selling_price/10:.1f}m [EV: {max(out_p.expected_value, 0.0):.2f}]")
+            print(f"     IN  🟢 : {in_p.element['web_name']} ({in_p.team['short_name']}) - £{in_p.element['now_cost']/10:.1f}m [EV: {in_p.expected_value:.2f}]")
+            print(f"     GAIN   : +{tr['gain']:.2f} Expected Points (Cost: 0 pts)\n")
+            transfer_payload.append({
                 "element_in": in_p.element["id"],
                 "element_out": out_p.element["id"],
-                "purchase_price": best_transfer["purchase_price"],
-                "selling_price": best_transfer["selling_price"]
-            }]
+                "purchase_price": tr["purchase_price"],
+                "selling_price": tr["selling_price"]
+            })
+
+        if not DRY_RUN:
+            logger.info("Submitting transfers to FPL API...")
             success = client.execute_transfers(transfer_payload, next_event["id"])
             if success:
-                squad_valuations = [p for p in squad_valuations if p.element["id"] != out_p.element["id"]] + [in_p]
+                for tr in best_transfers:
+                    out_p = tr["player_out"]
+                    in_p = tr["player_in"]
+                    squad_valuations = [p for p in squad_valuations if p.element["id"] != out_p.element["id"]] + [in_p]
             else:
                 logger.warning("Transfer submission failed. Keeping existing squad for lineup optimization.")
         else:
-            logger.info("[DRY RUN] Transfer simulated. Applying target to simulated lineup.")
-            squad_valuations = [p for p in squad_valuations if p.element["id"] != out_p.element["id"]] + [in_p]
+            logger.info("[DRY RUN] Transfers simulated. Applying targets to simulated lineup.")
+            for tr in best_transfers:
+                out_p = tr["player_out"]
+                in_p = tr["player_in"]
+                squad_valuations = [p for p in squad_valuations if p.element["id"] != out_p.element["id"]] + [in_p]
     else:
-        print("  ✅ Squad is optimal or no transfer exceeded improvement threshold. Rolling free transfer!")
+        print("  ✅ Squad is optimal or no transfer exceeded improvement threshold. Rolling free transfers!")
 
     # 6. Optimize Lineup, Bench & Captaincy
     print("\n" + "-" * 65)
@@ -186,7 +194,7 @@ def run():
         is_dry_run=DRY_RUN,
         summary_data=summary,
         squad_valuations=squad_valuations,
-        best_transfer=best_transfer,
+        best_transfers=best_transfers,
         final_picks=final_picks,
         formation=formation,
         captain=captain,
@@ -200,7 +208,7 @@ def run():
         deadline_str=deadline_str,
         is_dry_run=DRY_RUN,
         summary_data=summary,
-        best_transfer=best_transfer,
+        best_transfers=best_transfers,
         final_picks=final_picks,
         formation=formation,
         captain=captain,

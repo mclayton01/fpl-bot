@@ -1,10 +1,9 @@
 """
-FPL Optimization Engine: Player valuation, Formation solver, Captaincy selector, and Transfer optimizer.
+FPL Optimization Engine: Player valuation, Formation solver, Captaincy selector, and Multi-Transfer optimizer.
 """
 from dataclasses import dataclass
 from typing import Optional
 
-# Valid FPL outfield formations: (DEF, MID, FWD) where DEF >= 3, MID >= 2, FWD >= 1 and sum == 10
 VALID_FORMATIONS = [
     (3, 5, 2),
     (3, 4, 3),
@@ -36,15 +35,11 @@ class FPLOptimizer:
         self.types_by_id = {t["id"]: t for t in bootstrap.get("element_types", [])}
 
     def evaluate_player(self, element_id: int, selling_price: int = None, purchase_price: int = None) -> PlayerValuation:
-        """
-        Calculates expected points / value for a player considering form, ep_next,
-        injury flags, and fixture difficulty.
-        """
+        """Calculates expected points / value for a player considering form, ep_next, flags, and fixtures."""
         el = self.elements_by_id[element_id]
         team = self.teams_by_id[el["team"]]
         el_type = self.types_by_id[el["element_type"]]
 
-        # Base Expected Points (using FPL's ep_next, with form & points_per_game fallback)
         try:
             ep_next = float(el.get("ep_next") or 0.0)
         except (ValueError, TypeError):
@@ -65,7 +60,6 @@ class FPLOptimizer:
         else:
             base_ev = form * 0.7 + ppg * 0.3
 
-        # Availability / Injury Multiplier
         status = el.get("status", "a")
         chance = el.get("chance_of_playing_next_round")
         
@@ -97,7 +91,6 @@ class FPLOptimizer:
                     status_desc = f"Doubtful ({el.get('news', '')})"
 
         ev = base_ev * avail_multiplier
-        # Ensure red-flagged players get strong negative penalty so they are never in starting 11
         if avail_multiplier == 0.0:
             ev = -99.0
 
@@ -116,27 +109,20 @@ class FPLOptimizer:
         )
 
     def optimize_lineup(self, squad_valuations: list[PlayerValuation]) -> tuple[list[dict], tuple, PlayerValuation, PlayerValuation]:
-        """
-        Solves the best Starting XI formation, ranks the bench in priority order,
-        and selects Captain (C) and Vice-Captain (VC).
-        """
-        # Separate by position
+        """Solves the best Starting XI formation, ranks the bench, and selects Captain & Vice-Captain."""
         gkps = [p for p in squad_valuations if p.element_type["id"] == 1]
         defs = [p for p in squad_valuations if p.element_type["id"] == 2]
         mids = [p for p in squad_valuations if p.element_type["id"] == 3]
         fwds = [p for p in squad_valuations if p.element_type["id"] == 4]
 
-        # Sort each group by expected value descending
         gkps.sort(key=lambda x: x.expected_value, reverse=True)
         defs.sort(key=lambda x: x.expected_value, reverse=True)
         mids.sort(key=lambda x: x.expected_value, reverse=True)
         fwds.sort(key=lambda x: x.expected_value, reverse=True)
 
-        # 1 Starting Goalkeeper, 1 Bench Goalkeeper
         starting_gkp = gkps[0]
         bench_gkp = gkps[1] if len(gkps) > 1 else None
 
-        # Solve for best outfield formation
         best_formation = None
         best_score = -9999.0
         best_starters = []
@@ -161,29 +147,18 @@ class FPLOptimizer:
                 best_score = score
                 best_formation = (n_def, n_mid, n_fwd)
                 best_starters = chosen_defs + chosen_mids + chosen_fwds
-                
-                # Outfield bench candidates
                 outfield_bench = bench_defs + bench_mids + bench_fwds
-                # Sort outfield bench by expected points descending (so best backup subs first)
                 outfield_bench.sort(key=lambda x: x.expected_value, reverse=True)
                 best_bench = outfield_bench
 
         all_starters = [starting_gkp] + best_starters
-        # Captain is highest EV starter, Vice-Captain is 2nd highest
         sorted_starters = sorted(all_starters, key=lambda x: x.expected_value, reverse=True)
         captain = sorted_starters[0]
         
-        # Pick vice captain (prefer different team if possible)
         vc_candidates = [p for p in sorted_starters[1:] if p.element["team"] != captain.element["team"]]
         vice_captain = vc_candidates[0] if vc_candidates else sorted_starters[1]
 
-        # Build final 15-player picks list for FPL API
-        # Positions 1-11: Starting XI (1 GKP, then DEFs, MIDs, FWDs)
-        # Position 12: Bench GKP
-        # Positions 13, 14, 15: Outfield Bench in priority order
         final_picks = []
-        
-        # Starters
         pos_idx = 1
         for p in all_starters:
             final_picks.append({
@@ -195,7 +170,6 @@ class FPLOptimizer:
             })
             pos_idx += 1
 
-        # Bench GKP (Position 12)
         if bench_gkp:
             final_picks.append({
                 "element": bench_gkp.element["id"],
@@ -205,7 +179,6 @@ class FPLOptimizer:
                 "valuation": bench_gkp
             })
 
-        # Outfield Bench (Positions 13, 14, 15)
         for i, p in enumerate(best_bench):
             final_picks.append({
                 "element": p.element["id"],
@@ -223,77 +196,82 @@ class FPLOptimizer:
         bank: int,
         free_transfers: int,
         min_improvement: float = 0.75
-    ) -> Optional[dict]:
+    ) -> list[dict]:
         """
-        Finds the single best free transfer upgrade if beneficial.
-        Respects budget (player sell price + bank) and club limits (max 3 per club).
+        Finds up to free_transfers optimal player upgrades.
+        Supports 1 or 2 banked free transfers without taking point hits.
         """
         if free_transfers <= 0:
-            return None
+            return []
 
-        # Count players per team currently
-        team_counts = {}
-        for p in squad_valuations:
-            tid = p.element["team"]
-            team_counts[tid] = team_counts.get(tid, 0) + 1
+        current_squad = list(squad_valuations)
+        current_bank = bank
+        executed_transfers = []
 
-        current_squad_ids = {p.element["id"] for p in squad_valuations}
+        for _ in range(free_transfers):
+            # Count players per team currently
+            team_counts = {}
+            for p in current_squad:
+                tid = p.element["team"]
+                team_counts[tid] = team_counts.get(tid, 0) + 1
 
-        # Identify sell candidates (flagged/injured players first, then lowest EV outfielders)
-        flagged_players = [p for p in squad_valuations if p.is_injured_or_flagged or p.expected_value <= 0.0]
-        other_players = [p for p in squad_valuations if p not in flagged_players]
-        other_players.sort(key=lambda x: x.expected_value)
+            current_squad_ids = {p.element["id"] for p in current_squad}
 
-        # Candidate order: red flags first, then weakest players
-        sell_candidates = flagged_players + other_players
+            flagged_players = [p for p in current_squad if p.is_injured_or_flagged or p.expected_value <= 0.0]
+            other_players = [p for p in current_squad if p not in flagged_players]
+            other_players.sort(key=lambda x: x.expected_value)
 
-        best_transfer = None
-        best_gain = 0.0
+            sell_candidates = flagged_players + other_players
+            best_transfer = None
+            best_gain = 0.0
 
-        for player_out in sell_candidates:
-            max_budget = player_out.selling_price + bank
-            pos_type = player_out.element["element_type"]
-            out_tid = player_out.element["team"]
+            for player_out in sell_candidates:
+                max_budget = player_out.selling_price + current_bank
+                pos_type = player_out.element["element_type"]
+                out_tid = player_out.element["team"]
 
-            # Filter market for players in same position within budget
-            for el in self.bootstrap.get("elements", []):
-                if el["id"] in current_squad_ids:
-                    continue
-                if el["element_type"] != pos_type:
-                    continue
-                if el["now_cost"] > max_budget:
-                    continue
-                if el.get("status") not in ("a", "d"):
-                    continue
+                for el in self.bootstrap.get("elements", []):
+                    if el["id"] in current_squad_ids:
+                        continue
+                    if el["element_type"] != pos_type:
+                        continue
+                    if el["now_cost"] > max_budget:
+                        continue
+                    if el.get("status") not in ("a", "d"):
+                        continue
 
-                in_tid = el["team"]
-                # Check club constraint (max 3 per club)
-                current_club_count = team_counts.get(in_tid, 0)
-                if in_tid == out_tid:
-                    new_club_count = current_club_count # swapping within same club
-                else:
-                    new_club_count = current_club_count + 1
+                    in_tid = el["team"]
+                    current_club_count = team_counts.get(in_tid, 0)
+                    new_club_count = current_club_count if in_tid == out_tid else current_club_count + 1
 
-                if new_club_count > 3:
-                    continue
+                    if new_club_count > 3:
+                        continue
 
-                # Evaluate potential target
-                val_in = self.evaluate_player(el["id"], selling_price=el["now_cost"], purchase_price=el["now_cost"])
-                gain = val_in.expected_value - max(player_out.expected_value, 0.0)
+                    val_in = self.evaluate_player(el["id"], selling_price=el["now_cost"], purchase_price=el["now_cost"])
+                    gain = val_in.expected_value - max(player_out.expected_value, 0.0)
 
-                # If selling a red-flagged player with 0 EV, any healthy positive EV is a huge gain
-                if player_out.expected_value < 0:
-                    gain = val_in.expected_value
+                    if player_out.expected_value < 0:
+                        gain = val_in.expected_value
 
-                if gain > best_gain and gain >= min_improvement:
-                    best_gain = gain
-                    best_transfer = {
-                        "player_out": player_out,
-                        "player_in": val_in,
-                        "gain": gain,
-                        "selling_price": player_out.selling_price,
-                        "purchase_price": val_in.element["now_cost"],
-                        "cost": 0 # 1 FT = 0 hit points
-                    }
+                    if gain > best_gain and gain >= min_improvement:
+                        best_gain = gain
+                        best_transfer = {
+                            "player_out": player_out,
+                            "player_in": val_in,
+                            "gain": gain,
+                            "selling_price": player_out.selling_price,
+                            "purchase_price": val_in.element["now_cost"],
+                            "cost": 0
+                        }
 
-        return best_transfer
+            if best_transfer:
+                executed_transfers.append(best_transfer)
+                # Update simulation state for possible 2nd transfer
+                out_p = best_transfer["player_out"]
+                in_p = best_transfer["player_in"]
+                current_bank = current_bank + out_p.selling_price - in_p.element["now_cost"]
+                current_squad = [p for p in current_squad if p.element["id"] != out_p.element["id"]] + [in_p]
+            else:
+                break
+
+        return executed_transfers
