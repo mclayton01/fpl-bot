@@ -72,7 +72,7 @@ class FPLOptimizer:
             if chance is not None:
                 if chance == 0:
                     avail_multiplier = 0.0
-                    status_desc = f"Out (0% chance: {el.get('news', 'Injured')})"
+                    status_desc = f"Out (0% chance: {el.get('news', 'Injured / Transferred')})"
                 elif chance == 25:
                     avail_multiplier = 0.20
                     status_desc = f"Doubtful (25% chance: {el.get('news', '')})"
@@ -199,7 +199,7 @@ class FPLOptimizer:
     ) -> list[dict]:
         """
         Finds up to free_transfers optimal player upgrades.
-        Supports 1 or 2 banked free transfers without taking point hits.
+        Prioritizes replacing non-playing outfielders (e.g. Watkins/Caicedo) before bench goalkeepers.
         """
         if free_transfers <= 0:
             return []
@@ -209,7 +209,6 @@ class FPLOptimizer:
         executed_transfers = []
 
         for _ in range(free_transfers):
-            # Count players per team currently
             team_counts = {}
             for p in current_squad:
                 tid = p.element["team"]
@@ -217,11 +216,15 @@ class FPLOptimizer:
 
             current_squad_ids = {p.element["id"] for p in current_squad}
 
-            flagged_players = [p for p in current_squad if p.is_injured_or_flagged or p.expected_value <= 0.0]
-            other_players = [p for p in current_squad if p not in flagged_players]
-            other_players.sort(key=lambda x: x.expected_value)
+            # Prioritize: 1) Outfielders who left or are out (EV < 0), 2) Flagged outfielders, 3) Active outfielders, 4) GKPs
+            red_flags_outfield = [p for p in current_squad if p.expected_value < 0.0 and p.element_type["id"] != 1]
+            flagged_outfielders = [p for p in current_squad if p.is_injured_or_flagged and p not in red_flags_outfield and p.element_type["id"] != 1]
+            other_outfielders = [p for p in current_squad if p.element_type["id"] != 1 and p not in red_flags_outfield and p not in flagged_outfielders]
+            other_outfielders.sort(key=lambda x: x.expected_value)
+            gkps = [p for p in current_squad if p.element_type["id"] == 1]
+            gkps.sort(key=lambda x: x.expected_value)
 
-            sell_candidates = flagged_players + other_players
+            sell_candidates = red_flags_outfield + flagged_outfielders + other_outfielders + gkps
             best_transfer = None
             best_gain = 0.0
 
@@ -229,6 +232,7 @@ class FPLOptimizer:
                 max_budget = player_out.selling_price + current_bank
                 pos_type = player_out.element["element_type"]
                 out_tid = player_out.element["team"]
+                is_gkp = (pos_type == 1)
 
                 for el in self.bootstrap.get("elements", []):
                     if el["id"] in current_squad_ids:
@@ -248,10 +252,16 @@ class FPLOptimizer:
                         continue
 
                     val_in = self.evaluate_player(el["id"], selling_price=el["now_cost"], purchase_price=el["now_cost"])
-                    gain = val_in.expected_value - max(player_out.expected_value, 0.0)
-
+                    
+                    # Calculate gain
                     if player_out.expected_value < 0:
                         gain = val_in.expected_value
+                    else:
+                        gain = val_in.expected_value - max(player_out.expected_value, 0.0)
+
+                    # If this is a bench backup goalkeeper upgrade, weight it lower than outfield starters
+                    if is_gkp and player_out.expected_value >= 0.0:
+                        gain *= 0.15
 
                     if gain > best_gain and gain >= min_improvement:
                         best_gain = gain
@@ -266,7 +276,6 @@ class FPLOptimizer:
 
             if best_transfer:
                 executed_transfers.append(best_transfer)
-                # Update simulation state for possible 2nd transfer
                 out_p = best_transfer["player_out"]
                 in_p = best_transfer["player_in"]
                 current_bank = current_bank + out_p.selling_price - in_p.element["now_cost"]

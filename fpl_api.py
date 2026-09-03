@@ -1,5 +1,5 @@
 """
-FPL API Client: Supports both modern OIDC (Bearer / X-Api-Authorization) and legacy Cookie authentication.
+FPL API Client: Bulletproof data fetching with multi-tier fallbacks.
 """
 import json
 import logging
@@ -13,7 +13,6 @@ logger = logging.getLogger("FPLBot")
 class FPLClient:
     def __init__(self, team_id: int, auth_token: str = "", cookie: str = ""):
         self.team_id = team_id
-        # Support either auth_token or cookie parameter
         self.auth_token = (auth_token or cookie or "").strip()
         self.session = requests.Session()
         self.session.headers.update({
@@ -29,7 +28,6 @@ class FPLClient:
         if not self.auth_token:
             return
 
-        # Check if auth_token is an OIDC JSON object (from localStorage oidc.user)
         if "{" in self.auth_token and "}" in self.auth_token:
             try:
                 data = json.loads(self.auth_token)
@@ -44,7 +42,6 @@ class FPLClient:
             except Exception as e:
                 logger.warning(f"Could not parse auth token as JSON: {e}")
 
-        # Check if raw JWT Bearer token
         if self.auth_token.startswith("eyJ"):
             self.session.headers.update({
                 "X-Api-Authorization": f"Bearer {self.auth_token}",
@@ -53,7 +50,6 @@ class FPLClient:
             logger.info("Configured Bearer token authentication.")
             return
 
-        # Legacy cookie fallback
         cookie_val = self.auth_token if "pl_profile=" in self.auth_token or "=" in self.auth_token else f"pl_profile={self.auth_token}"
         self.session.headers.update({"Cookie": cookie_val})
 
@@ -90,7 +86,7 @@ class FPLClient:
     def get_current_picks(self, bootstrap: dict) -> tuple[list, dict]:
         """
         Retrieves the team's current 15 picks and financial summary.
-        Attempts authenticated /my-team/ endpoint first; falls back to public /picks/ if unauthenticated.
+        Attempts authenticated /my-team/ endpoint first; falls back to robust public data loop.
         """
         if self.auth_token:
             url = f"{FPL_BASE_URL}/my-team/{self.team_id}/"
@@ -111,35 +107,48 @@ class FPLClient:
             except Exception as e:
                 logger.warning(f"Failed to fetch authenticated team data: {e}. Falling back to public data.")
 
-        # Fallback to public endpoints
+        # Robust public fallback loop
         events = bootstrap.get("events", [])
-        current_or_prev_events = [e for e in events if e.get("is_current") or e.get("is_previous")]
-        event_id = current_or_prev_events[-1]["id"] if current_or_prev_events else 1
+        current_or_prev_events = [e for e in events if e.get("is_current") or e.get("is_previous") or e.get("finished")]
+        latest_event_id = current_or_prev_events[-1]["id"] if current_or_prev_events else 1
 
-        picks_url = f"{FPL_BASE_URL}/entry/{self.team_id}/event/{event_id}/picks/"
-        entry_url = f"{FPL_BASE_URL}/entry/{self.team_id}/"
+        # Fetch financial summary
+        bank = 15
+        value = 1000
+        try:
+            entry_url = f"{FPL_BASE_URL}/entry/{self.team_id}/"
+            entry_resp = self.session.get(entry_url, timeout=15)
+            if entry_resp.status_code == 200:
+                entry_data = entry_resp.json()
+                bank = entry_data.get("summary_overall_rank", 15) or 15
+                value = 1000
+        except Exception as e:
+            logger.warning(f"Could not fetch entry summary: {e}")
 
-        picks_resp = self.session.get(picks_url, timeout=15)
-        picks_resp.raise_for_status()
-        picks_data = picks_resp.json()
+        # Try event picks in reverse order until found
+        for ev_id in range(latest_event_id, 0, -1):
+            try:
+                picks_url = f"{FPL_BASE_URL}/entry/{self.team_id}/event/{ev_id}/picks/"
+                picks_resp = self.session.get(picks_url, timeout=15)
+                if picks_resp.status_code == 200:
+                    picks_data = picks_resp.json()
+                    history = picks_data.get("entry_history", {})
+                    summary = {
+                        "bank": history.get("bank", bank),
+                        "value": history.get("value", value),
+                        "free_transfers": 1,
+                        "authenticated": False
+                    }
+                    return picks_data.get("picks", []), summary
+            except Exception as e:
+                logger.warning(f"Failed to fetch public picks for event {ev_id}: {e}")
 
-        entry_resp = self.session.get(entry_url, timeout=15)
-        entry_resp.raise_for_status()
-        entry_data = entry_resp.json()
-
-        history = picks_data.get("entry_history", {})
-        summary = {
-            "bank": history.get("bank", 0),
-            "value": history.get("value", 1000),
-            "free_transfers": 1,
-            "authenticated": False
-        }
-        return picks_data.get("picks", []), summary
+        raise RuntimeError(f"Could not retrieve squad picks for team {self.team_id} from any event.")
 
     def update_lineup(self, picks_payload: list) -> bool:
         """Submits updated Starting XI, bench order, Captain, and Vice-Captain."""
         if not self.auth_token:
-            logger.error("Cannot submit lineup update: No auth token provided.")
+            logger.warning("Lineup submission skipped: No active auth token.")
             return False
 
         url = f"{FPL_BASE_URL}/my-team/{self.team_id}/"
@@ -147,18 +156,22 @@ class FPLClient:
             "chip": None,
             "picks": picks_payload
         }
-        resp = self.session.post(url, json=body, timeout=15)
-        if resp.status_code == 200:
-            logger.info("Successfully updated Starting XI, bench order, and captaincy on FPL!")
-            return True
-        else:
-            logger.error(f"Failed to update lineup. Status {resp.status_code}: {resp.text}")
+        try:
+            resp = self.session.post(url, json=body, timeout=15)
+            if resp.status_code == 200:
+                logger.info("Successfully updated Starting XI, bench order, and captaincy on FPL!")
+                return True
+            else:
+                logger.warning(f"Lineup update returned status {resp.status_code}: {resp.text}")
+                return False
+        except Exception as e:
+            logger.warning(f"Lineup update request failed: {e}")
             return False
 
     def execute_transfers(self, transfers_list: list, event_id: int) -> bool:
         """Executes player transfers on FPL API."""
         if not self.auth_token:
-            logger.error("Cannot execute transfers: No auth token provided.")
+            logger.warning("Transfer execution skipped: No active auth token.")
             return False
 
         url = f"{FPL_BASE_URL}/transfers/"
@@ -168,10 +181,14 @@ class FPLClient:
             "event": event_id,
             "transfers": transfers_list
         }
-        resp = self.session.post(url, json=body, timeout=15)
-        if resp.status_code == 200:
-            logger.info("Successfully executed transfers on FPL!")
-            return True
-        else:
-            logger.error(f"Failed to execute transfers. Status {resp.status_code}: {resp.text}")
+        try:
+            resp = self.session.post(url, json=body, timeout=15)
+            if resp.status_code == 200:
+                logger.info("Successfully executed transfers on FPL!")
+                return True
+            else:
+                logger.warning(f"Transfer execution returned status {resp.status_code}: {resp.text}")
+                return False
+        except Exception as e:
+            logger.warning(f"Transfer execution request failed: {e}")
             return False
