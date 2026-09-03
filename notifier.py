@@ -222,6 +222,11 @@ def send_email_notification(subject: str, html_content: str):
         msg["Subject"] = subject
         msg["From"] = f"FPL Manager <{smtp_user}>"
         msg["To"] = recipient
+        msg["Reply-To"] = smtp_user
+        msg["X-Priority"] = "1"
+        msg["Priority"] = "Urgent"
+        msg["Importance"] = "high"
+
         msg.attach(MIMEText(html_content, "html"))
 
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
