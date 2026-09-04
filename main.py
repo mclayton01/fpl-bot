@@ -64,8 +64,7 @@ def run():
 
         # Check if we should execute or wait closer to deadline
         if hours_left > HOURS_BEFORE_DEADLINE and not FORCE_RUN:
-            logger.info(f"Deadline is in {hours_left:.1f} hours (> {HOURS_BEFORE_DEADLINE}h).")
-            logger.info("Bot will wait until closer to the deadline to ensure the latest team news and press conferences are published.")
+            logger.info(f"Deadline is in {hours_left:.1f} hours (> {HOURS_BEFORE_DEADLINE}h). Waiting for window.")
             return
 
         # 3. Fetch Current Squad
@@ -101,7 +100,7 @@ def run():
             flag = f" ⚠️ {val.status_summary}" if val.is_injured_or_flagged else ""
             print(f"  • [{pos:3}] {name:16} ({club:3}) {cost:7} | {ev:8}{flag}")
 
-        # 5. Check for Multi-Transfers (supports banked FTs)
+        # 5. Check for Multi-Transfers
         print("\n" + "-" * 65)
         print(f"🔄 Transfer Analysis ({free_transfers} Free Transfers Available):")
         best_transfers = []
@@ -183,7 +182,7 @@ def run():
         else:
             logger.info("[DRY RUN] Lineup optimization completed successfully (No live changes sent).")
 
-        # 8. Generate and Publish Rich Markdown Summary & HTML Email
+        # 8. Generate and Publish Markdown Summary to GitHub
         md_summary = generate_markdown_summary(
             team_id=FPL_TEAM_ID,
             gameweek_name=gw_name,
@@ -199,20 +198,28 @@ def run():
         )
         save_step_summary(md_summary)
 
-        html_email = generate_html_email(
-            team_id=FPL_TEAM_ID,
-            gameweek_name=gw_name,
-            deadline_str=deadline_str,
-            is_dry_run=DRY_RUN,
-            summary_data=summary,
-            best_transfers=best_transfers,
-            final_picks=final_picks,
-            formation=formation,
-            captain=captain,
-            vice_captain=vice_captain
-        )
-        subject = f"⚽ FPL Cheat Sheet: {gw_name} Lineup & Transfers"
-        send_email_notification(subject=subject, html_content=html_email)
+        # 9. Smart Email Delivery: Send EXACTLY ONE email per gameweek
+        # Automatically sends on Friday morning (~4.0 - 6.5 hours before deadline) or when manually triggered (FORCE_RUN=True)
+        should_send_email = FORCE_RUN or (3.5 <= hours_left <= 6.5)
+
+        if should_send_email:
+            logger.info(f"Triggering matchday email ({hours_left:.1f}h before deadline / FORCE_RUN={FORCE_RUN})...")
+            html_email = generate_html_email(
+                team_id=FPL_TEAM_ID,
+                gameweek_name=gw_name,
+                deadline_str=deadline_str,
+                is_dry_run=DRY_RUN,
+                summary_data=summary,
+                best_transfers=best_transfers,
+                final_picks=final_picks,
+                formation=formation,
+                captain=captain,
+                vice_captain=vice_captain
+            )
+            subject = f"⚽ FPL Cheat Sheet: {gw_name} Lineup & Transfers"
+            send_email_notification(subject=subject, html_content=html_email)
+        else:
+            logger.info(f"Skipping email delivery ({hours_left:.1f}h before deadline). Emails only trigger once during the morning matchday window (~4-6h before deadline).")
 
         print("\n" + "="*65)
         print(" 🎉  FPL BOT RUN COMPLETE!  🚀")
@@ -220,7 +227,6 @@ def run():
 
     except Exception as e:
         logger.error(f"Unexpected error in FPL Bot execution: {e}", exc_info=True)
-        # Publish error to GitHub step summary so it is visible without crashing the workflow run
         err_msg = f"## ⚠️ FPL Assistant Notice\nCould not complete full automated run: `{e}`"
         save_step_summary(err_msg)
 
