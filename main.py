@@ -1,6 +1,7 @@
 """
 Main Entrypoint for Automated FPL Bot.
 """
+import os
 import sys
 import logging
 from datetime import datetime, timezone
@@ -27,6 +28,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger("FPLBot")
 
+STATE_FILE = "last_emailed_gw.txt"
+
+def get_last_emailed_gw() -> int:
+    """Reads the Gameweek ID that was last emailed."""
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                return int(content) if content else 0
+        except Exception:
+            return 0
+    return 0
+
+def record_emailed_gw(gw_id: int):
+    """Records the Gameweek ID so duplicate emails are never sent."""
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            f.write(str(gw_id) + "\n")
+    except Exception as e:
+        logger.warning(f"Could not record emailed state: {e}")
+
 def run():
     print("\n" + "="*65)
     print(" 🤖  FPL AUTOMATED HANDS-OFF BOT  ⚽")
@@ -46,16 +68,17 @@ def run():
 
         # 2. Check Upcoming Gameweek & Deadline (Formatted for NYC Eastern Time)
         next_event, deadline = client.get_next_event(bootstrap)
+        gw_id = next_event.get("id", 1)
+        gw_name = next_event.get("name", "Next Gameweek")
         now = datetime.now(timezone.utc)
         time_to_deadline = deadline - now
         hours_left = time_to_deadline.total_seconds() / 3600.0
-        gw_name = next_event.get("name", "Next Gameweek")
         
         # NYC Eastern Time Formatting
         deadline_nyc = deadline.astimezone(ZoneInfo("America/New_York"))
         deadline_str = f"{deadline_nyc.strftime('%A, %b %d at %I:%M %p')} EDT (NYC) / {deadline.strftime('%H:%M UTC')}"
 
-        print(f"📅 Next Event   : {gw_name}")
+        print(f"📅 Next Event   : {gw_name} (ID: {gw_id})")
         print(f"⏰ Deadline     : {deadline_str} ({hours_left:.1f} hours from now)")
 
         if hours_left < 0:
@@ -198,12 +221,19 @@ def run():
         )
         save_step_summary(md_summary)
 
-        # 9. Smart Email Delivery: Send EXACTLY ONE email per gameweek
-        # Automatically sends on Friday morning (~4.0 - 6.5 hours before deadline) or when manually triggered (FORCE_RUN=True)
-        should_send_email = FORCE_RUN or (3.5 <= hours_left <= 6.5)
+        # 9. Guaranteed Single-Email Lock per Gameweek
+        last_emailed = get_last_emailed_gw()
+        if FORCE_RUN:
+            logger.info("Force run requested: Sending email immediately.")
+            should_send = True
+        elif last_emailed == gw_id:
+            logger.info(f"Email already sent for Gameweek {gw_id} (last_emailed={last_emailed}). Suppressing duplicate email.")
+            should_send = False
+        else:
+            logger.info(f"New Gameweek {gw_id} detected (last_emailed={last_emailed}). Sending single matchday email.")
+            should_send = True
 
-        if should_send_email:
-            logger.info(f"Triggering matchday email ({hours_left:.1f}h before deadline / FORCE_RUN={FORCE_RUN})...")
+        if should_send:
             html_email = generate_html_email(
                 team_id=FPL_TEAM_ID,
                 gameweek_name=gw_name,
@@ -218,8 +248,8 @@ def run():
             )
             subject = f"⚽ FPL Cheat Sheet: {gw_name} Lineup & Transfers"
             send_email_notification(subject=subject, html_content=html_email)
-        else:
-            logger.info(f"Skipping email delivery ({hours_left:.1f}h before deadline). Emails only trigger once during the morning matchday window (~4-6h before deadline).")
+            record_emailed_gw(gw_id)
+            logger.info(f"Recorded Gameweek {gw_id} as successfully emailed.")
 
         print("\n" + "="*65)
         print(" 🎉  FPL BOT RUN COMPLETE!  🚀")
